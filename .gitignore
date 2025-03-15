@@ -1,0 +1,20 @@
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Tasks data directory (個人データは共有しない)
+# ディレクトリ自体は必要なので、以下のようにして中身だけを無視
+/tasks/*
+!/tasks/.gitkeep 
