@@ -17,4 +17,11 @@ Thumbs.db
 # Tasks data directory (個人データは共有しない)
 # ディレクトリ自体は必要なので、以下のようにして中身だけを無視
 /tasks/*
-!/tasks/.gitkeep 
+!/tasks/.gitkeep
+
+# 開発用ファイル
+.specstory/
+archived-*.md
+*_list.md
+files_list.md
+task_list.md 
