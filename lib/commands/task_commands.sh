@@ -75,6 +75,9 @@ cmd_add() {
     # タスクファイルが存在しない場合は初期化
     if ! file_exists "$TASK_FILE"; then
         initialize_task_file
+    else
+        # タスク構造を修復（タスク行の後に空行を確保）
+        repair_task_structure "$TASK_FILE"
     fi
     
     # ステータスに応じた記号を設定
@@ -150,6 +153,9 @@ cmd_update() {
     
     # タスクファイルの存在を確認
     check_task_file
+    
+    # タスク構造を修復（タスク行の後に空行を確保）
+    repair_task_structure "$TASK_FILE"
     
     # タスクの存在を確認
     if ! task_exists "$task_id"; then
@@ -273,6 +279,9 @@ cmd_update_detail() {
     # タスクファイルの存在を確認
     check_task_file
     
+    # タスク構造を修復（タスク行の後に空行を確保）
+    repair_task_structure "$TASK_FILE"
+    
     # タスクの存在を確認
     if ! task_exists "$task_id"; then
         error_exit "タスクID '$task_id' が見つかりません"
@@ -351,6 +360,9 @@ cmd_delete() {
     # タスクファイルの存在を確認
     check_task_file
     
+    # タスク構造を修復（タスク行の後に空行を確保）
+    repair_task_structure "$TASK_FILE"
+    
     # タスクの存在を確認
     if ! task_exists "$task_id"; then
         error_exit "タスクID '$task_id' が見つかりません"
@@ -409,6 +421,9 @@ cmd_list() {
     
     # タスクファイルの存在を確認
     check_task_file
+    
+    # タスク構造を修復（タスク行の後に空行を確保）
+    repair_task_structure "$TASK_FILE"
     
     local target_id="${1:-}"
     local status_filter="${2:-}"

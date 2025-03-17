@@ -340,4 +340,58 @@ add_task_detail() {
     
     safe_update_file "$details_file" "$temp_file"
     return 0
+}
+
+# タスクファイルの構造を修復（タスク行の後に空行を確保）
+repair_task_structure() {
+    local task_file="$1"
+    local temp_file=$(get_temp_file "repair_structure")
+    
+    # ファイルが存在しない場合は何もしない
+    if [ ! -f "$task_file" ]; then
+        debug_log "修復対象ファイルが存在しません: $task_file"
+        return 1
+    fi
+    
+    debug_log "タスク構造の修復を開始: $task_file"
+    
+    local prev_line=""
+    local prev_is_task=false
+    
+    # ファイルを1行ずつ処理
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # タスク行の検出
+        if [[ "$line" =~ ^-[[:space:]]*([A-Z0-9]+): ]]; then
+            # 前の行もタスク行だった場合は、間に空行が必要
+            if [ "$prev_is_task" = true ]; then
+                echo "" >> "$temp_file"
+                debug_log "連続するタスク行の間に空行を追加"
+            fi
+            
+            # 現在のタスク行を出力
+            echo "$line" >> "$temp_file"
+            prev_is_task=true
+            prev_line="$line"
+            continue
+        # 詳細行または他の行の処理
+        else
+            # 前の行がタスク行で、現在の行が空行でない詳細行の場合
+            if [ "$prev_is_task" = true ] && [[ -n "$line" ]] && [[ "$line" =~ ^[[:space:]] ]]; then
+                # タスク行と詳細行の間に空行を挿入
+                echo "" >> "$temp_file"
+                debug_log "タスク行と詳細行の間に空行を追加"
+            fi
+            
+            # 現在の行を出力
+            echo "$line" >> "$temp_file"
+            prev_is_task=false
+            prev_line="$line"
+        fi
+    done < "$task_file"
+    
+    # 変更を元のファイルに適用
+    safe_update_file "$task_file" "$temp_file"
+    debug_log "タスク構造の修復完了: $task_file"
+    
+    return 0
 } 
