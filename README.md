@@ -31,8 +31,13 @@
 
 ## 必要条件
 
+### Linux/macOS
 - Bashシェル (バージョン4.0以上推奨)
 - 基本的なUNIXコマンド: `grep`, `awk`, `sed`など
+
+### Windows
+- [WSL (Windows Subsystem for Linux)](https://docs.microsoft.com/ja-jp/windows/wsl/install) 推奨
+- または [Git Bash](https://gitforwindows.org/) / [Cygwin](https://www.cygwin.com/)
 
 ## インストール方法
 
@@ -54,7 +59,7 @@ cd task-management
 - `-d, --dir <dir>`: スクリプト一式のインストール先を指定（デフォルト: `$HOME/.task-management`）
 - `-l, --local`: 開発用にカレントディレクトリにシンボリックリンクを作成
 
-### 方法2: 手動インストール
+### 方法2: 手動インストール (Linux/macOS)
 
 ```bash
 # リポジトリをクローン
@@ -71,6 +76,46 @@ ln -s "$(pwd)/task.sh" ~/bin/task
 echo 'export PATH="$PATH:$HOME/bin"' >> ~/.bashrc  # または ~/.zshrc など
 source ~/.bashrc  # または ~/.zshrc
 ```
+
+### 方法3: Windowsでのインストール
+
+#### WSL (Windows Subsystem for Linux) を使用する場合（推奨）
+
+```bash
+# WSLをインストールし、UbuntuなどのLinuxディストリビューションを設定
+# Windows PowerShellを管理者権限で開き、次のコマンドを実行
+# wsl --install
+
+# WSLを起動し、Linux環境で以下を実行
+# リポジトリをクローン
+git clone https://github.com/yourusername/task-management.git
+cd task-management
+
+# インストールスクリプトを実行
+./install.sh
+```
+
+#### Git Bashを使用する場合
+
+```bash
+# Git for Windowsをインストールし、Git Bashを起動
+
+# リポジトリをクローン
+git clone https://github.com/yourusername/task-management.git
+cd task-management
+
+# スクリプトを実行可能にする
+chmod +x task.sh
+
+# スクリプトを直接実行
+./task.sh help
+
+# エイリアスを設定する場合
+echo 'alias task="/path/to/task-management/task.sh"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**注意**: Windows環境では一部の機能が制限される可能性があります。最適な体験を得るにはWSLを使用することを強く推奨します。
 
 ## 使用方法
 
@@ -149,6 +194,8 @@ task -v list
 ## データ形式
 
 タスク管理データは `tasks/tasks` ファイルに保存されます。フォーマットは以下の通りです：
+
+**Windowsユーザー向け注意事項**: データファイルはUNIX形式の改行コード(LF)を使用しています。Windowsのテキストエディタで編集する場合は、改行コードがCRLFに変換されないように注意してください。Git BashやWSLを使用することを推奨します。
 
 ```
 ☑ PA01 完了したタスク
