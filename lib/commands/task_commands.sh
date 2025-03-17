@@ -158,37 +158,39 @@ cmd_update() {
     
     # 新しい状態記号を取得
     local symbol=$(get_status_symbol "$status")
+
+    # 1. Tasksセクションの開始行を特定
+    local tasks_start=$(grep -n "^# Tasks" "$TASK_FILE" | head -1 | cut -d':' -f1)
+    if [ -z "$tasks_start" ]; then
+        error_exit "タスクファイル内にTasksセクションが見つかりません"
+    fi
     
-    # 一時ファイルで処理
+    # 2. Detailsセクションの開始行（またはファイル終端）を特定
+    local details_start=$(grep -n "^# Details" "$TASK_FILE" | head -1 | cut -d':' -f1)
+    if [ -z "$details_start" ]; then
+        details_start=$(wc -l < "$TASK_FILE")
+    fi
+    
+    # 3. Tasksセクション内のタスク行を検索
+    local task_line=$(sed -n "${tasks_start},${details_start}p" "$TASK_FILE" | 
+                     grep -n "[[:space:]]*[^[:space:]][^[:space:]]*[[:space:]]*${task_id}[[:space:]]" | 
+                     head -1 | cut -d':' -f1)
+    
+    if [ -z "$task_line" ]; then
+        error_exit "Tasksセクション内にタスクID '$task_id' が見つかりません"
+    fi
+    
+    # 実際のファイル内の行番号を計算
+    task_line=$((tasks_start + task_line - 1))
+    
+    # 4. 一時ファイルで処理
     local temp_file=$(get_temp_file "update")
     
-    # タスク行を更新（Tasksセクションのみを対象）
-    awk -v id="$task_id" -v symbol="$symbol" '
-    BEGIN { in_tasks = 0; in_details = 0; }
-    {
-        # セクションの検出
-        if ($0 ~ /^# Tasks/) {
-            in_tasks = 1;
-            in_details = 0;
-        } else if ($0 ~ /^# Details/) {
-            in_tasks = 0;
-            in_details = 1;
-        }
-        
-        # タスクセクション内のIDに一致する行を更新
-        if (in_tasks && $0 ~ id && !($0 ~ /^#/)) {
-            sub(/[^[:space:]]+/, symbol, $0);
-            print $0;
-        } else {
-            print $0;
-        }
-    }' "$TASK_FILE" > "$temp_file"
+    # 5. タスク行の状態を更新（最初の非空白文字を置換）
+    sed "${task_line}s/[^[:space:]][^[:space:]]*/\\${symbol}/" "$TASK_FILE" > "$temp_file"
     
-    # 更新を適用
+    # 6. 更新を適用
     safe_update_file "$TASK_FILE" "$temp_file"
-    
-    # Detailsセクションのフォーマットを修正
-    fix_details_format
     
     echo "タスク '$task_id' の状態を '$status' に更新しました"
     return 0
@@ -290,73 +292,47 @@ cmd_update_detail() {
         error_exit "不正なフィールド名: $field_arg"
     fi
     
-    # タスク詳細セクションを探し、指定されたフィールドを更新/追加する
+    # グレップベースの効率的なアプローチを使用する
+    
+    # 1. タスク行の行番号を取得
+    local task_line=$(grep -n "^- *${task_id}:" "$TASK_FILE" | cut -d':' -f1)
+    if [ -z "$task_line" ]; then
+        error_exit "タスクID '$task_id' がファイル内で見つかりません"
+    fi
+    
+    # 2. 次のタスク行またはファイル終端までの範囲を特定
+    local next_task_line=$(tail -n "+$((task_line + 1))" "$TASK_FILE" | grep -n "^-" | head -1 | cut -d':' -f1)
+    if [ -n "$next_task_line" ]; then
+        next_task_line=$((task_line + next_task_line - 1))
+    else
+        # 次のタスクが見つからない場合はファイルの末尾まで
+        next_task_line=$(wc -l < "$TASK_FILE")
+    fi
+    
+    # 3. 該当範囲内でフィールドが存在するか確認
+    local field_exists=false
+    local field_line=$(sed -n "${task_line},${next_task_line}p" "$TASK_FILE" | grep -n "^ *${valid_field} *${DETAIL_SEPARATOR}" | head -1 | cut -d':' -f1)
+    
+    if [ -n "$field_line" ]; then
+        field_exists=true
+        field_line=$((task_line + field_line - 1))
+    fi
+    
     local temp_file=$(get_temp_file "update_detail")
     
-    # タスクファイルを一行ずつ処理
-    local in_details=false
-    local in_task=false
-    local updated=false
-    local next_task=false
-    
-    # ファイルを先頭から一行ずつ読み込み
-    while IFS= read -r line; do
-        # Detailsセクションの開始
-        if [[ "$line" == "# Details" ]]; then
-            in_details=true
-            echo "$line" >> "$temp_file"
-            continue
-        fi
-        
-        # 対象タスクの開始
-        if [[ "$in_details" == true && "$line" =~ ^-\ *${task_id}: ]]; then
-            in_task=true
-            echo "$line" >> "$temp_file"
-            continue
-        fi
-        
-        # 次のタスクの開始（=現在のタスク詳細の終了）
-        if [[ "$in_task" == true && "$line" =~ ^-\ * ]]; then
-            # フィールドが追加されていない場合、ここで追加
-            if [[ "$updated" == false ]]; then
-                echo "  ${valid_field} ${DETAIL_SEPARATOR} ${value}" >> "$temp_file"
-                updated=true
-            fi
-            in_task=false
-            next_task=true
-        fi
-        
-        # タスク詳細内でフィールドを更新
-        if [[ "$in_task" == true && "$line" =~ ^\ *${valid_field}\ *${DETAIL_SEPARATOR} ]]; then
-            echo "  ${valid_field} ${DETAIL_SEPARATOR} ${value}" >> "$temp_file"
-            updated=true
-            continue
-        fi
-        
-        # 次のタスクに移る場合
-        if [[ "$next_task" == true ]]; then
-            next_task=false
-        fi
-        
-        # その他の行はそのまま出力
-        echo "$line" >> "$temp_file"
-    done < "$TASK_FILE"
-    
-    # ファイルが最後まで読み込まれ、まだタスク内かつ更新されていない場合
-    if [[ "$in_task" == true && "$updated" == false ]]; then
-        echo "  ${valid_field} ${DETAIL_SEPARATOR} ${value}" >> "$temp_file"
-        echo "" >> "$temp_file" # 空行を追加
-        updated=true
-    fi
-    
-    # 更新を適用
-    safe_update_file "$TASK_FILE" "$temp_file"
-    
-    if [[ "$updated" == true ]]; then
+    # 4. フィールドが存在する場合は更新、存在しない場合は追加
+    if [ "$field_exists" = true ]; then
+        # フィールド行を更新
+        sed "${field_line}s/^ *${valid_field} *${DETAIL_SEPARATOR}.*/  ${valid_field} ${DETAIL_SEPARATOR} ${value}/" "$TASK_FILE" > "$temp_file"
         echo "タスク '$task_id' の $valid_field を '$value' に更新しました"
     else
-        echo "更新に失敗しました。タスク '$task_id' が見つからないか、詳細セクションに問題があります。"
+        # フィールドを追加（タスク行の直後に挿入）
+        sed "${task_line}a\\  ${valid_field} ${DETAIL_SEPARATOR} ${value}" "$TASK_FILE" > "$temp_file"
+        echo "タスク '$task_id' に $valid_field: $value を追加しました"
     fi
+    
+    # 5. 更新を適用
+    safe_update_file "$TASK_FILE" "$temp_file"
     
     return 0
 }
