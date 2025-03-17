@@ -130,6 +130,9 @@ cmd_add() {
     # 一時ファイルを削除
     rm -f "$tasks_temp" "$details_temp"
     
+    # タスク詳細を整形して順序を保持
+    format_task_details "$TASK_FILE"
+    
     echo "タスク '$name' (ID: $id) を追加しました"
     return 0
 }
@@ -197,6 +200,9 @@ cmd_update() {
     
     # 6. 更新を適用
     safe_update_file "$TASK_FILE" "$temp_file"
+    
+    # 7. タスク詳細を整形して順序を保持
+    format_task_details "$TASK_FILE"
     
     echo "タスク '$task_id' の状態を '$status' に更新しました"
     return 0
@@ -279,9 +285,6 @@ cmd_update_detail() {
     # タスクファイルの存在を確認
     check_task_file
     
-    # タスク構造を修復（タスク行の後に空行を確保）
-    repair_task_structure "$TASK_FILE"
-    
     # タスクの存在を確認
     if ! task_exists "$task_id"; then
         error_exit "タスクID '$task_id' が見つかりません"
@@ -301,49 +304,125 @@ cmd_update_detail() {
         error_exit "不正なフィールド名: $field_arg"
     fi
     
-    # グレップベースの効率的なアプローチを使用する
+    # タスクファイルの現在の状態を保存
+    local original_file=$(get_temp_file "original")
+    cat "$TASK_FILE" > "$original_file"
     
-    # 1. タスク行の行番号を取得
-    local task_line=$(grep -n "^- *${task_id}:" "$TASK_FILE" | cut -d':' -f1)
-    if [ -z "$task_line" ]; then
-        error_exit "タスクID '$task_id' がファイル内で見つかりません"
-    fi
+    # 行単位の処理のための一時ファイル
+    local temp_file=$(get_temp_file "update_field")
     
-    # 2. 次のタスク行またはファイル終端までの範囲を特定
-    local next_task_line=$(tail -n "+$((task_line + 1))" "$TASK_FILE" | grep -n "^-" | head -1 | cut -d':' -f1)
-    if [ -n "$next_task_line" ]; then
-        next_task_line=$((task_line + next_task_line - 1))
-    else
-        # 次のタスクが見つからない場合はファイルの末尾まで
-        next_task_line=$(wc -l < "$TASK_FILE")
-    fi
-    
-    # 3. 該当範囲内でフィールドが存在するか確認
+    # 1. ファイルを解析してタスク詳細の位置を特定
+    local in_details=false
+    local inside_task=false
+    local found=false
     local field_exists=false
-    local field_line=$(sed -n "${task_line},${next_task_line}p" "$TASK_FILE" | grep -n "^ *${valid_field} *${DETAIL_SEPARATOR}" | head -1 | cut -d':' -f1)
     
-    if [ -n "$field_line" ]; then
-        field_exists=true
-        field_line=$((task_line + field_line - 1))
+    # タスク詳細セクション内のすべてのフィールド行をバッファに保存
+    declare -a field_buffer=()
+    
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Detailsセクションの開始を検出
+        if [[ "$line" =~ ^#\ Details ]]; then
+            in_details=true
+            echo "$line" >> "$temp_file"
+            continue
+        fi
+        
+        # Detailsセクション内でタスクIDを検索
+        if [ "$in_details" = true ]; then
+            # タスク詳細の開始行を検出
+            if [[ "$line" =~ ^-[[:space:]]*${task_id}: ]]; then
+                inside_task=true
+                echo "$line" >> "$temp_file"
+                continue
+            fi
+            
+            # タスク詳細の終了を検出（次のタスク詳細またはファイル終端）
+            if [ "$inside_task" = true ] && ([[ "$line" =~ ^-[[:space:]]* ]] || [[ -z "$line" ]]); then
+                inside_task=false
+                
+                # このタスクに対するフィールドが存在しなかった場合は追加
+                if [ "$field_exists" = false ]; then
+                    echo "  ${valid_field} ${DETAIL_SEPARATOR} ${value}" >> "$temp_file"
+                    found=true
+                fi
+                
+                # バッファから未処理のフィールド行を出力
+                for field_line in "${field_buffer[@]}"; do
+                    echo "$field_line" >> "$temp_file"
+                done
+                field_buffer=()
+            fi
+            
+            # 現在のタスク内でフィールド行を処理
+            if [ "$inside_task" = true ]; then
+                # フィールド行を検出
+                if [[ "$line" =~ ^[[:space:]]+ ]]; then
+                    # 現在のフィールド名を抽出
+                    if [[ "$line" =~ ^[[:space:]]*([^${DETAIL_SEPARATOR}]+)[[:space:]]*${DETAIL_SEPARATOR} ]]; then
+                        local current_field="${BASH_REMATCH[1]}"
+                        current_field=$(echo "$current_field" | xargs)  # 余分な空白を削除
+                        
+                        # 更新対象のフィールドの場合
+                        if [ "$current_field" = "$valid_field" ]; then
+                            field_exists=true
+                            # 更新された値を出力
+                            echo "  ${valid_field} ${DETAIL_SEPARATOR} ${value}" >> "$temp_file"
+                            found=true
+                            continue
+                        fi
+                    fi
+                    # 他のフィールド行はバッファに追加
+                    field_buffer+=("$line")
+                    continue
+                fi
+            fi
+        fi
+        
+        # その他の行はそのまま出力
+        echo "$line" >> "$temp_file"
+    done < "$original_file"
+    
+    # ファイルの最後でタスク内にいる場合、残りのフィールドを処理
+    if [ "$inside_task" = true ]; then
+        # 対象のフィールドがなかった場合は追加
+        if [ "$field_exists" = false ]; then
+            echo "  ${valid_field} ${DETAIL_SEPARATOR} ${value}" >> "$temp_file"
+            found=true
+        fi
+        
+        # バッファから未処理のフィールド行を出力
+        for field_line in "${field_buffer[@]}"; do
+            echo "$field_line" >> "$temp_file"
+        done
     fi
     
-    local temp_file=$(get_temp_file "update_detail")
+    # 2. タスクIDが見つからなかった場合は追加
+    if [ "$in_details" = true ] && [ "$inside_task" = false ] && [ "$found" = false ]; then
+        # ファイルの最後に新しいタスク詳細を追加
+        echo "" >> "$temp_file"
+        echo "- ${task_id}:" >> "$temp_file"
+        echo "  ${valid_field} ${DETAIL_SEPARATOR} ${value}" >> "$temp_file"
+        found=true
+    fi
     
-    # 4. フィールドが存在する場合は更新、存在しない場合は追加
-    if [ "$field_exists" = true ]; then
-        # フィールド行を更新
-        sed "${field_line}s/^ *${valid_field} *${DETAIL_SEPARATOR}.*/  ${valid_field} ${DETAIL_SEPARATOR} ${value}/" "$TASK_FILE" > "$temp_file"
-        echo "タスク '$task_id' の $valid_field を '$value' に更新しました"
+    # 3. ファイルを更新
+    if [ "$found" = true ]; then
+        safe_update_file "$TASK_FILE" "$temp_file"
+        echo "タスク '${task_id}' の ${valid_field} を '${value}' に更新しました"
     else
-        # フィールドを追加（タスク行の直後に挿入）
-        sed "${task_line}a\\  ${valid_field} ${DETAIL_SEPARATOR} ${value}" "$TASK_FILE" > "$temp_file"
-        echo "タスク '$task_id' に $valid_field: $value を追加しました"
+        echo "タスク '${task_id}' を更新できませんでした"
+        cat "$original_file" > "$TASK_FILE"  # 元のファイルを復元
+        return 1
     fi
-    
-    # 5. 更新を適用
-    safe_update_file "$TASK_FILE" "$temp_file"
     
     return 0
+}
+
+# 安全にタスク詳細を更新（古いBashとの互換性を確保）- cmd_update_detailの別名
+cmd_update_detail_safe() {
+    cmd_update_detail "$@"
+    return $?
 }
 
 # タスクを削除
@@ -404,6 +483,9 @@ cmd_delete() {
     
     # 更新を適用
     safe_update_file "$TASK_FILE" "$temp_file"
+    
+    # タスク詳細を整形して順序を保持
+    format_task_details "$TASK_FILE"
     
     echo "タスク '$task_id' を削除しました"
     return 0
@@ -526,6 +608,21 @@ display_task_details() {
     fi
 }
 
+# タスク詳細のフォーマット
+cmd_format() {
+    # タスクファイルの存在確認
+    check_task_file
+    
+    # テンプレート設定を読み込む
+    load_template "$CURRENT_TEMPLATE"
+    
+    # タスク詳細をフォーマット
+    format_task_details "$TASK_FILE"
+    
+    echo "タスク詳細のフォーマットが完了しました"
+    return 0
+}
+
 # バッチ操作の実行
 cmd_batch() {
     if [ $# -lt 1 ]; then
@@ -590,7 +687,7 @@ cmd_batch() {
                 field=$(echo "$field" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 value=$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 
-                cmd_update_detail "$id" "$field" "$value" || echo "警告: ${count}行目の詳細更新に失敗しました"
+                cmd_update_detail_safe "$id" "$field" "$value" || echo "警告: ${count}行目の詳細更新に失敗しました"
                 ;;
             *)
                 echo "警告: ${count}行目: 不明な操作タイプ '$op_type'"
@@ -598,6 +695,9 @@ cmd_batch() {
                 ;;
         esac
     done < "$input_file"
+    
+    # タスク詳細を整形して順序を保持
+    format_task_details "$TASK_FILE"
     
     echo "バッチ操作が完了しました"
     return 0

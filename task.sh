@@ -37,8 +37,10 @@ task add <タスク名> <状態>                   # タスクを追加
 task batch <ファイル>                       # 一括操作の実行
 task update <タスクID> <新状態>             # タスク状態を更新
 task update-detail <ID> <フィールド> <値>   # タスク詳細を更新
+task update-detail-safe <ID> <フィールド> <値> # 安全にタスク詳細を更新
 task delete <ID>                           # タスクを削除
 task list [ID] [--status <状態>]           # タスク一覧表示
+task format                               # タスク詳細のフォーマットを整理
 task template list                        # テンプレート一覧表示
 task template show <テンプレート名>         # テンプレートの内容を表示
 task template use <テンプレート名>          # テンプレートを使用
@@ -107,11 +109,17 @@ parse_args() {
         "update-detail")
             cmd_update_detail "$@"
             ;;
+        "update-detail-safe")
+            cmd_update_detail_safe "$@"
+            ;;
         "delete")
             cmd_delete "$@"
             ;;
         "list")
             cmd_list "$@"
+            ;;
+        "format")
+            cmd_format
             ;;
         "template")
             handle_template_command "$@"

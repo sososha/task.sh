@@ -319,24 +319,16 @@ add_task_detail() {
     cat "$details_file" > "$temp_file"
     
     # 詳細情報を追加
-    echo "" >> "$temp_file"
+    # 最初のタスクかどうか確認
+    if ! grep -q "^- [A-Z0-9][A-Z0-9][0-9]\{2\}:" "$details_file"; then
+        # 最初のタスクの場合は空行を追加
+        echo "" >> "$temp_file"
+    fi
     echo "- ${task_id}:" >> "$temp_file"
     
     # 各フィールドの値を設定
-    for ((i=0; i<${#DETAIL_FIELDS[@]} && i<2; i++)); do
-        local field="${DETAIL_FIELDS[$i]}"
-        local value=""
-        
-        if [ $i -eq 0 ]; then
-            value="${details:-${task_name}の実装}"
-        elif [ $i -eq 1 ]; then
-            value="${consideration:-未定}"
-        else
-            value=""
-        fi
-        
-        echo "  ${field}${DETAIL_SEPARATOR}${value}" >> "$temp_file"
-    done
+    echo "  ${DETAIL_FIELDS[0]} ${DETAIL_SEPARATOR} ${details:-${task_name}の実装}" >> "$temp_file"
+    echo "  ${DETAIL_FIELDS[1]} ${DETAIL_SEPARATOR} ${consideration:-未定}" >> "$temp_file"
     
     safe_update_file "$details_file" "$temp_file"
     return 0
@@ -393,5 +385,150 @@ repair_task_structure() {
     safe_update_file "$task_file" "$temp_file"
     debug_log "タスク構造の修復完了: $task_file"
     
+    return 0
+}
+
+# タスク詳細を定義された順序で整理する
+format_task_details() {
+    local task_file="$1"
+    local temp_file=$(get_temp_file "format_details")
+    
+    # ファイルが存在しない場合は何もしない
+    if [ ! -f "$task_file" ]; then
+        debug_log "修復対象ファイルが存在しません: $task_file"
+        return 1
+    fi
+    
+    debug_log "タスク詳細のフォーマットを開始: $task_file"
+    
+    # DETAIL_FIELDSが未定義の場合、デフォルト値を設定
+    if [ -z "${DETAIL_FIELDS[*]:-}" ]; then
+        DETAIL_FIELDS=("内容" "設計思想" "懸念" "実装結果" "結果的懸念")
+    fi
+    
+    # DETAIL_SEPARATORが未定義の場合、デフォルト値を設定
+    DETAIL_SEPARATOR="${DETAIL_SEPARATOR:-:}"
+    
+    # タスクファイルをセクションに分割して処理
+    local tasks_temp=$(get_temp_file "tasks_section")
+    local details_temp=$(get_temp_file "details_section")
+    
+    split_task_file "$task_file" "$tasks_temp" "$details_temp"
+    
+    # Tasksセクションをそのまま保持（末尾の余分な空行を除去）
+    local last_non_empty_line=""
+    local output_tasks=""
+    
+    while IFS= read -r line; do
+        if [[ -n "$line" ]] || [[ -n "$last_non_empty_line" ]]; then
+            if [[ -n "$last_non_empty_line" ]]; then
+                output_tasks+="$last_non_empty_line"$'\n'
+            fi
+            last_non_empty_line="$line"
+        fi
+    done < "$tasks_temp"
+    
+    if [[ -n "$last_non_empty_line" ]]; then
+        output_tasks+="$last_non_empty_line"$'\n'
+    fi
+    
+    # Detailsの前に必ず1行だけ空行を入れる
+    output_tasks+=$'\n'
+    
+    # Detailsヘッダーを追加
+    output_tasks+="# Details"$'\n'
+    output_tasks+="# 書式:"$'\n'
+    output_tasks+="# ID: ${DETAIL_FIELDS[0]} ${DETAIL_SEPARATOR} ${DETAIL_FIELDS[1]} ${DETAIL_SEPARATOR} ${DETAIL_FIELDS[2]} ${DETAIL_SEPARATOR} ${DETAIL_FIELDS[3]} ${DETAIL_SEPARATOR} ${DETAIL_FIELDS[4]}"$'\n'
+    
+    # Tasks セクションからタスク情報を取得
+    local task_ids=()
+    local task_names=()
+    
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*[${SYMBOL_COMPLETED}${SYMBOL_IN_PROGRESS}${SYMBOL_NOT_STARTED}][[:space:]]+([A-Z0-9][A-Z0-9][0-9]{2})[[:space:]]+(.+) ]]; then
+            task_ids+=("${BASH_REMATCH[1]}")
+            task_names+=("${BASH_REMATCH[2]}")
+        fi
+    done < "$tasks_temp"
+    
+    # 詳細セクションからタスク詳細を抽出
+    # 連想配列の代わりに複数の配列を使用
+    local task_detail_ids=()
+    local task_detail_fields=()
+    local task_detail_values=()
+    local current_task=""
+    
+    while IFS= read -r line; do
+        # タスク行を検出
+        if [[ "$line" =~ ^-[[:space:]]*([A-Z0-9][A-Z0-9][0-9]{2}): ]]; then
+            current_task="${BASH_REMATCH[1]}"
+            continue
+        fi
+        
+        # 現在のタスクの詳細フィールドを抽出
+        if [ -n "$current_task" ] && [[ "$line" =~ ^[[:space:]]*([^${DETAIL_SEPARATOR}]+)${DETAIL_SEPARATOR}(.*) ]]; then
+            local field=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            local value=$(echo "${BASH_REMATCH[2]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            
+            task_detail_ids+=("$current_task")
+            task_detail_fields+=("$field")
+            task_detail_values+=("$value")
+        fi
+    done < "$details_temp"
+    
+    # 各タスクの詳細セクションを生成
+    local output_details=""
+    local first_task=true
+    for task_id in "${task_ids[@]}"; do
+        # 最初のタスクの前だけ空行を入れる、それ以外は空行なし
+        if [ "$first_task" = true ]; then
+            output_details+=$'\n'
+            first_task=false
+        fi
+        output_details+="- ${task_id}:"$'\n'
+        
+        local task_index=0
+        for ((i=0; i<${#task_ids[@]}; i++)); do
+            if [ "${task_ids[$i]}" = "$task_id" ]; then
+                task_index=$i
+                break
+            fi
+        done
+        
+        local task_name="${task_names[$task_index]}"
+        local fields_found=false
+        
+        # 各フィールドを順番に出力
+        for field in "${DETAIL_FIELDS[@]}"; do
+            # このタスクIDとフィールドに対応する値を探す
+            local value=""
+            for ((j=0; j<${#task_detail_ids[@]}; j++)); do
+                if [ "${task_detail_ids[$j]}" = "$task_id" ] && [ "${task_detail_fields[$j]}" = "$field" ]; then
+                    value="${task_detail_values[$j]}"
+                    break
+                fi
+            done
+            
+            if [ -n "$value" ]; then
+                output_details+="  ${field} ${DETAIL_SEPARATOR} ${value}"$'\n'
+                fields_found=true
+            fi
+        done
+        
+        # フィールドがない場合はデフォルト値を設定
+        if [ "$fields_found" = false ]; then
+            output_details+="  ${DETAIL_FIELDS[0]} ${DETAIL_SEPARATOR} ${task_name}の実装"$'\n'
+            output_details+="  ${DETAIL_FIELDS[1]} ${DETAIL_SEPARATOR} 未定"$'\n'
+        fi
+    done
+    
+    # 最終的な出力をファイルに書き込む
+    echo -n "$output_tasks" > "$temp_file"
+    echo -n "$output_details" >> "$temp_file"
+    
+    # 更新を適用
+    safe_update_file "$task_file" "$temp_file"
+    
+    debug_log "タスク詳細のフォーマット完了: $task_file"
     return 0
 } 
