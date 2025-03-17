@@ -4,7 +4,28 @@
 set -euo pipefail
 
 # 現在のスクリプトディレクトリを取得
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# macOSとLinuxの両方で動作するシンボリックリンク解決方法
+resolve_symlink() {
+    local path="$1"
+    local resolved_path="$path"
+    
+    # シンボリックリンクを解決
+    while [ -L "$resolved_path" ]; do
+        local target="$(readlink "$resolved_path")"
+        if [ "${target:0:1}" = "/" ]; then
+            # 絶対パス
+            resolved_path="$target"
+        else
+            # 相対パス
+            resolved_path="$(dirname "$resolved_path")/$target"
+        fi
+    done
+    
+    echo "$resolved_path"
+}
+
+SCRIPT_PATH="$(resolve_symlink "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 # グローバル変数
 VERSION="2.0.0"
