@@ -106,6 +106,20 @@ install_task_management() {
         # 実行権限を付与
         chmod +x "$INSTALL_DIR/task.sh"
         
+        # libディレクトリをコピー
+        if [ -d "$SCRIPT_DIR/lib" ]; then
+            echo -e "${GREEN}libディレクトリをコピー: $SCRIPT_DIR/lib -> $INSTALL_DIR/lib${NC}"
+            mkdir -p "$INSTALL_DIR/lib"
+            cp -r "$SCRIPT_DIR/lib"/* "$INSTALL_DIR/lib/"
+        fi
+        
+        # tasksディレクトリをコピー
+        if [ -d "$SCRIPT_DIR/tasks" ]; then
+            echo -e "${GREEN}tasksディレクトリをコピー: $SCRIPT_DIR/tasks -> $INSTALL_DIR/tasks${NC}"
+            mkdir -p "$INSTALL_DIR/tasks"
+            cp -r "$SCRIPT_DIR/tasks"/* "$INSTALL_DIR/tasks/" 2>/dev/null || true
+        fi
+        
         # シンボリックリンクを作成
         echo -e "${GREEN}シンボリックリンクを作成: $BIN_DIR/task -> $INSTALL_DIR/task.sh${NC}"
         ln -sf "$INSTALL_DIR/task.sh" "$BIN_DIR/task"
